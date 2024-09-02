@@ -1,10 +1,13 @@
 import tkinter as tk
 from tkinter import ttk
+    # pip install tkinter
 import pyautogui
+    # pip install pyautogui
 import time
 import threading
 from datetime import datetime, timedelta
 from pynput import keyboard
+    # pip install pynput
 
 # Global variables to hold the state
 pinned_location = None
