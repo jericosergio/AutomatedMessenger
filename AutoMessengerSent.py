@@ -1,13 +1,11 @@
 import tkinter as tk
 from tkinter import ttk
-    # pip install tkinter
 import pyautogui
-    # pip install pyautogui
 import time
 import threading
 from datetime import datetime, timedelta
 from pynput import keyboard
-    # pip install pynput
+import random
 
 # Global variables to hold the state
 pinned_location = None
@@ -17,6 +15,9 @@ interval_mode = "seconds"  # Default interval mode
 location_updating = True  # Controls whether location updates are active
 timestamp_format = "%H:%M"  # Default timestamp format
 remaining_time = None  # Stores the remaining time for countdown
+automation_mode = "interval"  # Default automation mode
+specific_minute = 0
+random_minute_range = 0
 
 def update_location_display():
     """Updates the location display in real-time."""
@@ -51,6 +52,51 @@ def set_interval_mode(mode):
     global interval_mode
     interval_mode = mode
 
+def set_automation_mode(mode):
+    """Set automation mode and update the visibility of input fields."""
+    global automation_mode
+    automation_mode = mode
+    
+    if mode == "specific":
+        specific_minute_entry.pack()
+        specific_minute_label.pack()
+        interval_seconds_radio.pack_forget()
+        interval_minutes_radio.pack_forget()
+        random_range_entry.pack_forget()
+        random_range_label.pack_forget()
+        interval_entry.pack_forget()
+        interval_label.pack_forget()
+    elif mode == "random":
+        random_range_entry.pack()
+        random_range_label.pack()
+        specific_minute_entry.pack_forget()
+        specific_minute_label.pack_forget()
+        interval_seconds_radio.pack_forget()
+        interval_minutes_radio.pack_forget()
+        interval_entry.pack_forget()
+        interval_label.pack_forget()
+    elif mode == "interval":
+        interval_seconds_radio.pack(anchor="w")
+        interval_minutes_radio.pack(anchor="w")
+        interval_entry.pack(pady=5, fill="x")
+        interval_label.pack(pady=5, fill="x")
+        specific_minute_entry.pack_forget()
+        specific_minute_label.pack_forget()
+        random_range_entry.pack_forget()
+        random_range_label.pack_forget()
+
+def update_settings():
+    """Updates settings when the user changes input."""
+    global specific_minute, random_minute_range
+    try:
+        if automation_mode == "specific":
+            specific_minute = int(specific_minute_entry.get())
+        elif automation_mode == "random":
+            random_minute_range = int(random_range_entry.get())
+        update_status("Settings updated successfully.", "green")
+    except ValueError:
+        update_status("Please enter valid numbers for specific minute or random range.", "red")
+
 def update_status(message, color="black"):
     """Update the status message displayed on the GUI."""
     status_label.config(text=message, foreground=color)
@@ -61,6 +107,7 @@ def set_timestamp_format(format_option):
     format_map = {
         "HH:MM": "%H:%M",
         "HH:MM:SS": "%H:%M:%S",
+        "HH:MM AM/PM": "%H:%M %p",
         "HH:MM:SS AM/PM": "%I:%M:%S %p",
         "HH:MM:SS AM/PM Date": "%I:%M:%S %p %Y-%m-%d"
     }
@@ -76,17 +123,9 @@ def start_automation(event=None):
 
     try:
         message = message_entry.get()
-        interval = int(interval_entry.get())
-
-        if interval_mode == "minutes":
-            interval *= 60  # Convert minutes to seconds
 
         if not message:
             update_status("Please enter a message.", "red")
-            return
-
-        if interval <= 0:
-            update_status("Please enter a valid interval.", "red")
             return
 
         if is_running:
@@ -98,15 +137,27 @@ def start_automation(event=None):
         is_paused = False
         start_button.config(style="Running.TButton")
         pause_button.config(style="Paused.TButton")
-        remaining_time = interval  # Set the initial countdown time
-        threading.Thread(target=send_message, args=(message, interval), daemon=True).start()
-        threading.Thread(target=update_countdown, args=(interval,), daemon=True).start()
-        update_status(f"Automation started. Message: '{message}' every {interval} seconds.", "green")
+
+        if automation_mode == "specific":
+            threading.Thread(target=send_message_specific_times, args=(message,), daemon=True).start()
+            threading.Thread(target=update_countdown_specific_time, args=(), daemon=True).start()
+        elif automation_mode == "random":
+            threading.Thread(target=send_message_random_intervals, args=(message,), daemon=True).start()
+            threading.Thread(target=update_countdown_random_intervals, args=(), daemon=True).start()
+        elif automation_mode == "interval":
+            interval = int(interval_entry.get())
+            if interval_mode == "minutes":
+                interval *= 60  # Convert minutes to seconds
+            remaining_time = interval  # Set the initial countdown time
+            threading.Thread(target=send_message_interval, args=(message, interval), daemon=True).start()
+            threading.Thread(target=update_countdown, args=(interval,), daemon=True).start()
+
+        update_status("Automation started.", "green")
 
     except ValueError:
         update_status("Invalid interval. Please enter a number.", "red")
 
-def send_message(message, interval):
+def send_message_interval(message, interval):
     """Sends the specified message at the pinned location every specified interval."""
     global is_running, is_paused
     while is_running:
@@ -121,6 +172,47 @@ def send_message(message, interval):
             pyautogui.press('enter')  # Press Enter to send
             time.sleep(interval)  # Wait for the specified interval before sending again
 
+def send_message_specific_times(message):
+    """Sends the specified message every hour at a specific minute."""
+    global is_running, is_paused, specific_minute
+    while is_running:
+        now = datetime.now()
+        if now.minute == specific_minute and not is_paused:
+            # Insert timestamp in the message at [timestamp] placeholder
+            timestamp = datetime.now().strftime(timestamp_format)
+            formatted_message = message.replace("[timestamp]", timestamp)
+            
+            pyautogui.click(pinned_location)  # Click on the pinned location to focus the input box
+            time.sleep(0.5)  # Small delay to ensure the chat box is active
+            pyautogui.typewrite(formatted_message)  # Type the message
+            pyautogui.press('enter')  # Press Enter to send
+            time.sleep(60 - now.second)  # Wait until the start of the next minute
+
+        time.sleep(60)  # Wait until the next check
+
+def send_message_random_intervals(message):
+    """Sends the specified message at random intervals within a specified range each hour."""
+    global is_running, is_paused, random_minute_range
+    while is_running:
+        if not is_paused:
+            now = datetime.now()
+            next_minute = random.randint(0, random_minute_range)
+            next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+            if next_time < now:
+                next_time += timedelta(hours=1)
+
+            time_until_next = (next_time - now).total_seconds()
+            time.sleep(time_until_next)
+
+            # Insert timestamp in the message at [timestamp] placeholder
+            timestamp = datetime.now().strftime(timestamp_format)
+            formatted_message = message.replace("[timestamp]", timestamp)
+            
+            pyautogui.click(pinned_location)  # Click on the pinned location to focus the input box
+            time.sleep(0.5)  # Small delay to ensure the chat box is active
+            pyautogui.typewrite(formatted_message)  # Type the message
+            pyautogui.press('enter')  # Press Enter to send
+
 def update_countdown(interval):
     """Updates the countdown timer on the GUI."""
     global remaining_time
@@ -134,6 +226,41 @@ def update_countdown(interval):
             remaining_time = interval
         else:
             time.sleep(1)
+
+def update_countdown_specific_time():
+    """Updates the countdown timer for the Specific Time mode."""
+    global specific_minute
+    while is_running:
+        if not is_paused:
+            now = datetime.now()
+            next_time = now.replace(minute=specific_minute, second=0, microsecond=0)
+            if next_time < now:
+                next_time += timedelta(hours=1)
+            remaining_time = int((next_time - now).total_seconds())
+
+            for i in range(remaining_time, 0, -1):
+                if is_paused or not is_running:
+                    break
+                countdown_var.set(str(timedelta(seconds=i)))
+                time.sleep(1)
+
+def update_countdown_random_intervals():
+    """Updates the countdown timer for the Random Intervals mode."""
+    global random_minute_range
+    while is_running:
+        if not is_paused:
+            now = datetime.now()
+            next_minute = random.randint(0, random_minute_range)
+            next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+            if next_time < now:
+                next_time += timedelta(hours=1)
+            remaining_time = int((next_time - now).total_seconds())
+
+            for i in range(remaining_time, 0, -1):
+                if is_paused or not is_running:
+                    break
+                countdown_var.set(str(timedelta(seconds=i)))
+                time.sleep(1)
 
 def pause_automation(event=None):
     """Pauses the automation."""
@@ -208,43 +335,52 @@ status_label = ttk.Label(left_frame, text="", foreground="black")
 status_label.pack(pady=5, fill="x")
 
 # Instructions and input fields
+instructions = (
+    "Instructions:\n"
+    "1. Specific Time: Sends messages at a specific minute past the hour (e.g., 05 minutes).\n"
+    "2. Random Intervals: Sends messages at random minutes within the hour.\n"
+    "3. Interval Mode: Sends messages at fixed intervals of seconds or minutes."
+)
+ttk.Label(left_frame, text=instructions).pack(pady=5, fill="x")
+
 ttk.Label(left_frame, text="Enter the message (use [timestamp] for time):").pack(pady=5, fill="x")
 message_entry = ttk.Entry(left_frame)
 message_entry.pack(pady=5, fill="x")
 
-ttk.Label(left_frame, text="Enter interval:").pack(pady=5, fill="x")
+# Interval label and entry
+interval_label = ttk.Label(left_frame, text="Enter interval:")
 interval_entry = ttk.Entry(left_frame)
-interval_entry.pack(pady=5, fill="x")
+
+# Specific minute label and entry for Specific Time mode
+specific_minute_label = ttk.Label(left_frame, text="Specific minute (for Specific Time mode):")
+specific_minute_entry = ttk.Entry(left_frame)
+
+# Random range label and entry for Random Intervals mode
+random_range_label = ttk.Label(left_frame, text="Random minute range (for Random Intervals mode):")
+random_range_entry = ttk.Entry(left_frame)
 
 # Interval mode variable and radio buttons
 interval_var = tk.StringVar(value="seconds")  # Controls the radio button state
-ttk.Radiobutton(left_frame, text="Seconds", variable=interval_var, value="seconds", 
-               command=lambda: set_interval_mode("seconds")).pack(anchor="w")
-ttk.Radiobutton(left_frame, text="Minutes", variable=interval_var, value="minutes", 
-               command=lambda: set_interval_mode("minutes")).pack(anchor="w")
+interval_seconds_radio = ttk.Radiobutton(left_frame, text="Seconds", variable=interval_var, value="seconds", 
+               command=lambda: set_interval_mode("seconds"))
+interval_minutes_radio = ttk.Radiobutton(left_frame, text="Minutes", variable=interval_var, value="minutes", 
+               command=lambda: set_interval_mode("minutes"))
+
+# Automation mode variable and radio buttons
+automation_var = tk.StringVar(value="interval")  # Controls the automation mode
+ttk.Radiobutton(left_frame, text="Interval", variable=automation_var, value="interval", 
+               command=lambda: set_automation_mode("interval")).pack(anchor="w")
+ttk.Radiobutton(left_frame, text="Specific Time", variable=automation_var, value="specific", 
+               command=lambda: set_automation_mode("specific")).pack(anchor="w")
+ttk.Radiobutton(left_frame, text="Random Intervals", variable=automation_var, value="random", 
+               command=lambda: set_automation_mode("random")).pack(anchor="w")
 
 # Dropdown menu to select timestamp format
 ttk.Label(left_frame, text="Select timestamp format:").pack(pady=5, fill="x")
 timestamp_format_var = tk.StringVar(value="HH:MM")
-timestamp_options = ["HH:MM", "HH:MM:SS", "HH:MM:SS AM/PM", "HH:MM:SS AM/PM Date"]
+timestamp_options = ["HH:MM", "HH:MM:SS","HH:MM AM/PM", "HH:MM:SS AM/PM", "HH:MM:SS AM/PM Date"]
 timestamp_menu = ttk.OptionMenu(left_frame, timestamp_format_var, *timestamp_options, command=set_timestamp_format)
 timestamp_menu.pack(pady=5, fill="x")
-
-# Pin location button
-pin_button = ttk.Button(left_frame, text="<ctrl>+p: Toggle Pin Location", command=toggle_location_update)
-pin_button.pack(pady=10, fill="x")
-
-# Start button
-start_button = ttk.Button(left_frame, text="<ctrl>+s: Start Automation", command=start_automation)
-start_button.pack(pady=5, fill="x")
-
-# Pause button
-pause_button = ttk.Button(left_frame, text="<ctrl>+r: Pause/Resume", command=pause_automation)
-pause_button.pack(pady=5, fill="x")
-
-# Stop button
-stop_button = ttk.Button(left_frame, text="<ctrl>+x Stop Automation", command=stop_automation)
-stop_button.pack(pady=5, fill="x")
 
 # Countdown timer section
 ttk.Label(right_frame, text="COUNTDOWN", font=("Arial", 16)).pack(pady=10)
@@ -259,6 +395,26 @@ current_time_var = tk.StringVar()
 current_time_var.set(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 current_time_label = ttk.Label(right_frame, textvariable=current_time_var, font=("Arial", 16))
 current_time_label.pack(pady=10)
+
+# Start button
+start_button = ttk.Button(right_frame, text="<ctrl>+s: Start Automation", command=start_automation)
+start_button.pack(pady=5, fill="x")
+
+# Pause button
+pause_button = ttk.Button(right_frame, text="<ctrl>+r: Pause/Resume", command=pause_automation)
+pause_button.pack(pady=5, fill="x")
+
+# Stop button
+stop_button = ttk.Button(right_frame, text="<ctrl>+x: Stop Automation", command=stop_automation)
+stop_button.pack(pady=5, fill="x")
+
+# Pin location button
+pin_button = ttk.Button(right_frame, text="<ctrl>+p: Toggle Pin Location", command=toggle_location_update)
+pin_button.pack(pady=5, fill="x")
+
+# Update settings button
+update_button = ttk.Button(right_frame, text="Update Settings", command=update_settings)
+update_button.pack(pady=5, fill="x")
 
 # Start real-time location display and current time display in separate threads
 threading.Thread(target=update_location_display, daemon=True).start()
